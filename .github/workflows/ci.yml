@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install numpy pandas scikit-learn scipy requests click pytest reportlab
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+      - name: Smoke test full pipeline
+        run: |
+          python -c "
+          import sys, json
+          sys.path.insert(0, '.')
+          from src.data_loader import generate_synthetic
+          from src.drift_detector import TasteDriftDetector
+          from src.recommender import AdaptiveMemoryRecommender, train_test_split_temporal, evaluate
+
+          df = generate_synthetic(n_users=100, n_days=365, seed=42)
+          df.to_csv('/tmp/ci_ratings.csv', index=False)
+
+          import pandas as pd
+          df = pd.read_csv('/tmp/ci_ratings.csv')
+          df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+          detector = TasteDriftDetector()
+          profiles = detector.fit(df)
+          print(f'Profiles: {len(profiles)}')
+
+          train_df, test_df = train_test_split_temporal(df)
+          model = AdaptiveMemoryRecommender()
+          model.fit(train_df, profiles, mode='adaptive')
+          results = evaluate(model, test_df, k=10)
+          print(f'NDCG@10: {results[\"ndcg_at_k\"]}')
+          print('CI smoke test passed.')
+          "
+
+      - name: Generate paper PDF
+        run: |
+          python paper/generate_paper.py
+
+      - name: Upload paper artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-paper-py${{ matrix.python-version }}
+          path: paper/adaptive_memory_paper.pdf
