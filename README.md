@@ -125,6 +125,4 @@ This repository provides the first complete, reproducible implementation for res
 
 ---
 
-## License
 
-MIT
